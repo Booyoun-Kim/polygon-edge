@@ -1,7 +1,7 @@
 package autorelay
 
 import (
-	"github.com/libp2p/go-libp2p-core/host"
+	"github.com/libp2p/go-libp2p/core/host"
 )
 
 type AutoRelayHost struct {
@@ -12,6 +12,10 @@ type AutoRelayHost struct {
 func (h *AutoRelayHost) Close() error {
 	_ = h.ar.Close()
 	return h.Host.Close()
+}
+
+func (h *AutoRelayHost) Start() {
+	h.ar.Start()
 }
 
 func NewAutoRelayHost(h host.Host, ar *AutoRelay) *AutoRelayHost {

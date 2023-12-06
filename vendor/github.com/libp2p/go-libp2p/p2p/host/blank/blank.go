@@ -6,16 +6,15 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/libp2p/go-libp2p-core/connmgr"
-	"github.com/libp2p/go-libp2p-core/event"
-	"github.com/libp2p/go-libp2p-core/host"
-	"github.com/libp2p/go-libp2p-core/network"
-	"github.com/libp2p/go-libp2p-core/peer"
-	"github.com/libp2p/go-libp2p-core/peerstore"
-	"github.com/libp2p/go-libp2p-core/protocol"
-	"github.com/libp2p/go-libp2p-core/record"
-
-	"github.com/libp2p/go-eventbus"
+	"github.com/libp2p/go-libp2p/core/connmgr"
+	"github.com/libp2p/go-libp2p/core/event"
+	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/peerstore"
+	"github.com/libp2p/go-libp2p/core/protocol"
+	"github.com/libp2p/go-libp2p/core/record"
+	"github.com/libp2p/go-libp2p/p2p/host/eventbus"
 
 	logging "github.com/ipfs/go-log/v2"
 
@@ -28,7 +27,7 @@ var log = logging.Logger("blankhost")
 // BlankHost is the thinnest implementation of the host.Host interface
 type BlankHost struct {
 	n        network.Network
-	mux      *mstream.MultistreamMuxer
+	mux      *mstream.MultistreamMuxer[protocol.ID]
 	cmgr     connmgr.ConnManager
 	eventbus event.Bus
 	emitters struct {
@@ -66,10 +65,10 @@ func NewBlankHost(n network.Network, options ...Option) *BlankHost {
 	bh := &BlankHost{
 		n:    n,
 		cmgr: cfg.cmgr,
-		mux:  mstream.NewMultistreamMuxer(),
+		mux:  mstream.NewMultistreamMuxer[protocol.ID](),
 	}
 	if bh.eventbus == nil {
-		bh.eventbus = eventbus.NewBus()
+		bh.eventbus = eventbus.NewBus(eventbus.WithMetricsTracer(eventbus.NewMetricsTracer()))
 	}
 
 	// subscribe the connection manager to network notifications (has no effect with NullConnMgr)
@@ -79,11 +78,6 @@ func NewBlankHost(n network.Network, options ...Option) *BlankHost {
 	if bh.emitters.evtLocalProtocolsUpdated, err = bh.eventbus.Emitter(&event.EvtLocalProtocolsUpdated{}); err != nil {
 		return nil
 	}
-	evtPeerConnectednessChanged, err := bh.eventbus.Emitter(&event.EvtPeerConnectednessChanged{})
-	if err != nil {
-		return nil
-	}
-	n.Notify(newPeerConnectWatcher(evtPeerConnectednessChanged))
 
 	n.SetStreamHandler(bh.newStreamHandler)
 
@@ -159,35 +153,29 @@ func (bh *BlankHost) NewStream(ctx context.Context, p peer.ID, protos ...protoco
 		return nil, err
 	}
 
-	var protoStrs []string
-	for _, pid := range protos {
-		protoStrs = append(protoStrs, string(pid))
-	}
-
-	selected, err := mstream.SelectOneOf(protoStrs, s)
+	selected, err := mstream.SelectOneOf(protos, s)
 	if err != nil {
 		s.Reset()
 		return nil, err
 	}
 
-	selpid := protocol.ID(selected)
-	s.SetProtocol(selpid)
+	s.SetProtocol(selected)
 	bh.Peerstore().AddProtocols(p, selected)
 
 	return s, nil
 }
 
 func (bh *BlankHost) RemoveStreamHandler(pid protocol.ID) {
-	bh.Mux().RemoveHandler(string(pid))
+	bh.Mux().RemoveHandler(pid)
 	bh.emitters.evtLocalProtocolsUpdated.Emit(event.EvtLocalProtocolsUpdated{
 		Removed: []protocol.ID{pid},
 	})
 }
 
 func (bh *BlankHost) SetStreamHandler(pid protocol.ID, handler network.StreamHandler) {
-	bh.Mux().AddHandler(string(pid), func(p string, rwc io.ReadWriteCloser) error {
+	bh.Mux().AddHandler(pid, func(p protocol.ID, rwc io.ReadWriteCloser) error {
 		is := rwc.(network.Stream)
-		is.SetProtocol(protocol.ID(p))
+		is.SetProtocol(p)
 		handler(is)
 		return nil
 	})
@@ -196,10 +184,10 @@ func (bh *BlankHost) SetStreamHandler(pid protocol.ID, handler network.StreamHan
 	})
 }
 
-func (bh *BlankHost) SetStreamHandlerMatch(pid protocol.ID, m func(string) bool, handler network.StreamHandler) {
-	bh.Mux().AddHandlerWithFunc(string(pid), m, func(p string, rwc io.ReadWriteCloser) error {
+func (bh *BlankHost) SetStreamHandlerMatch(pid protocol.ID, m func(protocol.ID) bool, handler network.StreamHandler) {
+	bh.Mux().AddHandlerWithFunc(pid, m, func(p protocol.ID, rwc io.ReadWriteCloser) error {
 		is := rwc.(network.Stream)
-		is.SetProtocol(protocol.ID(p))
+		is.SetProtocol(p)
 		handler(is)
 		return nil
 	})
@@ -217,7 +205,7 @@ func (bh *BlankHost) newStreamHandler(s network.Stream) {
 		return
 	}
 
-	s.SetProtocol(protocol.ID(protoID))
+	s.SetProtocol(protoID)
 
 	go handle(protoID, s)
 }

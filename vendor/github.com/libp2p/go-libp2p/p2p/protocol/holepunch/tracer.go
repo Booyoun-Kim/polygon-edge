@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/libp2p/go-libp2p-core/peer"
+	"github.com/libp2p/go-libp2p/core/peer"
 
 	ma "github.com/multiformats/go-multiaddr"
 )
@@ -227,7 +227,8 @@ func (t *tracer) gc() {
 
 	for {
 		select {
-		case now := <-timer.C:
+		case <-timer.C:
+			now := time.Now()
 			t.mutex.Lock()
 			for id, entry := range t.peers {
 				if entry.last.Before(now.Add(-tracerCacheDuration)) {
