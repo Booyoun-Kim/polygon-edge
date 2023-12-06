@@ -4,8 +4,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/libp2p/go-libp2p-core/host"
-	"github.com/libp2p/go-libp2p-core/network"
+	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
 )
 
 // config holds configurable options for the autonat subsystem.
@@ -17,6 +17,7 @@ type config struct {
 	dialer            network.Network
 	forceReachability bool
 	reachability      network.Reachability
+	metricsTracer     MetricsTracer
 
 	// client
 	bootDelay          time.Duration
@@ -139,6 +140,14 @@ func WithThrottling(amount int, interval time.Duration) Option {
 func WithPeerThrottling(amount int) Option {
 	return func(c *config) error {
 		c.throttlePeerMax = amount
+		return nil
+	}
+}
+
+// WithMetricsTracer uses mt to track autonat metrics
+func WithMetricsTracer(mt MetricsTracer) Option {
+	return func(c *config) error {
+		c.metricsTracer = mt
 		return nil
 	}
 }

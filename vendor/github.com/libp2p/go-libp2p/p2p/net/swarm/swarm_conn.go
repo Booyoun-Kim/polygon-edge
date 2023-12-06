@@ -8,10 +8,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	ic "github.com/libp2p/go-libp2p-core/crypto"
-	"github.com/libp2p/go-libp2p-core/network"
-	"github.com/libp2p/go-libp2p-core/peer"
-	"github.com/libp2p/go-libp2p-core/transport"
+	ic "github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/transport"
 
 	ma "github.com/multiformats/go-multiaddr"
 )
@@ -42,6 +42,10 @@ type Conn struct {
 }
 
 var _ network.Conn = &Conn{}
+
+func (c *Conn) IsClosed() bool {
+	return c.conn.IsClosed()
+}
 
 func (c *Conn) ID() string {
 	// format: <first 10 chars of peer id>-<global conn ordinal>
@@ -126,6 +130,7 @@ func (c *Conn) start() {
 
 				// We only get an error here when the swarm is closed or closing.
 				if err != nil {
+					scope.Done()
 					return
 				}
 
@@ -168,14 +173,15 @@ func (c *Conn) RemotePeer() peer.ID {
 	return c.conn.RemotePeer()
 }
 
-// LocalPrivateKey is the public key of the peer on this side
-func (c *Conn) LocalPrivateKey() ic.PrivKey {
-	return c.conn.LocalPrivateKey()
-}
-
 // RemotePublicKey is the public key of the peer on the remote side
 func (c *Conn) RemotePublicKey() ic.PubKey {
 	return c.conn.RemotePublicKey()
+}
+
+// ConnState is the security connection state. including early data result.
+// Empty if not supported.
+func (c *Conn) ConnState() network.ConnectionState {
+	return c.conn.ConnState()
 }
 
 // Stat returns metadata pertaining to this connection
@@ -197,9 +203,18 @@ func (c *Conn) NewStream(ctx context.Context) (network.Stream, error) {
 	if err != nil {
 		return nil, err
 	}
-	ts, err := c.conn.OpenStream(ctx)
+
+	s, err := c.openAndAddStream(ctx, scope)
 	if err != nil {
 		scope.Done()
+		return nil, err
+	}
+	return s, nil
+}
+
+func (c *Conn) openAndAddStream(ctx context.Context, scope network.StreamManagementScope) (network.Stream, error) {
+	ts, err := c.conn.OpenStream(ctx)
+	if err != nil {
 		return nil, err
 	}
 	return c.addStream(ts, network.DirOutbound, scope)
@@ -210,7 +225,6 @@ func (c *Conn) addStream(ts network.MuxedStream, dir network.Direction, scope ne
 	// Are we still online?
 	if c.streams.m == nil {
 		c.streams.Unlock()
-		scope.Done()
 		ts.Reset()
 		return nil, ErrConnClosed
 	}
